@@ -175,15 +175,13 @@
       $('oldBalance').value = '';
       return null;
     }
-    const loanDate = new Date(dateStr);
+    // 支持格式：2023/06 或 2023-06（只到月，默认当月1日）
+    const parts = dateStr.replace('-', '/').split('/');
+    const loanDate = new Date(parts[0], (parts[1] || 1) - 1, 1);
     const today = new Date();
-    if (loanDate >= today) { $('oldBalance').value = f2(amt); return amt; }
-    // 已过月数（向上取整，当月算一期）
+    if (loanDate >= today) { $('oldBalance').value = f2(amt); return amt }
+    // 已过整月数
     let monthsPassed = (today.getFullYear() - loanDate.getFullYear()) * 12 + (today.getMonth() - loanDate.getMonth());
-    // 如果还没到当月还款日（按每月同日），少算一期
-    const dayInMonth = Math.min(today.getDate(), new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate());
-    const loanDay = loanDate.getDate();
-    if (dayInMonth < loanDay && monthsPassed > 0) monthsPassed--;
     const totalMonths = Math.round(yrs * 12);
     if (monthsPassed >= totalMonths) { $('oldBalance').value = '0'; return 0; }
     // 跑摊销表到当前期
@@ -413,7 +411,7 @@
       oldYears: 10, oldAnnual: 167.808, oldDeposit: 41.25, oldPenalty: 0,
       newAmt: 970, newYears: 10, newRepay: 'month',
       newRate: 4, svcRate: 5, evalFee: 2, mgmtRate: 2.5, opexRate: 1, newDeposit: 121.25, newPenalty: 0,
-      oldLoanDate: '2023-06-15'
+      oldLoanDate: '2023/06'
     };
     for (const k in ex) { const el = $(k); if (el) el.value = ex[k]; }
     autoCalcBalance();
