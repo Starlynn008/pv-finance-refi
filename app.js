@@ -76,7 +76,22 @@
     const upfrontNoDeposit = svc + evalFee + mgmtYear + opexYear;
     const surplus = extra - upfrontNoDeposit;
 
-    const rateDrop = (inp.oldRate - newRate) / inp.oldRate;
+    // ===== 综合融资成本（全口径年化）=====
+    // 口径：首年全口径支出（利息+年化服务费+年化评估费+管理费+运维费）÷ 原剩余本金 × 100%
+    // 原因：客户感知的是"原来825万本金每年付出多少→置换后同样基数下付出多少"
+    const oldAllInRate = inp.oldRate;  // 旧方案基本只有银行利息
+    // 新方案首年利息（从还款计划第1年取，比总利息年均更反映客户即期感受）
+    const newY1Interest = yearPI(newRows, 1, newPpy) - (newAmt / (newYears * newPpy)) * newPpy; // 近似：首年本息-首年本金
+    // 更精确：直接从schedule取前ppy期interest求和
+    let _y1Int = 0;
+    for (let i = 0; i < Math.min(newPpy, newRows.length); i++) _y1Int += newRows[i].interest;
+    const svcAnnual = svc / newYears;
+    const evalAnnual = evalFee / newYears;
+    const newY1AllIn = _y1Int + svcAnnual + evalAnnual + mgmtYear + opexYear;
+    const newAllInRate = inp.oldBalance > 0 ? (newY1AllIn / inp.oldBalance * 100) : 0;
+    const allInDrop = oldAllInRate > 0 ? ((oldAllInRate - newAllInRate) / oldAllInRate) : 0;
+
+    const rateDrop = allInDrop;  // 兼容下游引用；语义改为全口径降幅
 
     const oldMonth = oldYearPI / 12, old3m = oldMonth * 3;
     const newQuarter = newYearPI / 4, new3m = newQuarter;
@@ -90,7 +105,8 @@
       newYearPI, newInterest, svc, evalFee, mgmtTotal, mgmtYear, opexTotal, opexYear,
       newYearActual, newYearNetCF,
       oldTotalCost, newTotalCost, costSave,
-      extra, upfrontNoDeposit, surplus, rateDrop,
+      extra, upfrontNoDeposit, surplus, rateDrop, allInDrop,
+      oldAllInRate, newAllInRate,
       oldMonth, old3m, newQuarter, new3m, flowDelta3m, type,
       newRate, oldRate: inp.oldRate, oldBalance: inp.oldBalance,
       oldMw: inp.oldMw, oldAnnual: inp.oldAnnual, oldDeposit: inp.oldDeposit,
@@ -158,7 +174,7 @@
   function renderBrief(m, inp) {
     const repayDrop = m.oldYearPI - m.newYearPI;
     const repayDropPct = m.oldYearPI ? (repayDrop / m.oldYearPI * 100) : 0;
-    const costDropPct = m.rateDrop * 100;
+    const costDropPct = m.allInDrop * 100;
     const A = m.type === 'A';
     const typeTag = A ? '真实降本型' : '资金放大型';
 
@@ -178,7 +194,7 @@
           <div class="brief-item">
             <div class="num">↓ ${f2(costDropPct)}%</div>
             <div class="lbl2">综合融资成本降幅</div>
-            <div class="desc">融资利率由 ${f2(m.oldRate)}% 降至 ${f2(m.newRate)}%</div>
+            <div class="desc">综合成本由 ${f2(m.oldAllInRate)}% 降至约 ${f2(m.newAllInRate)}%（含利息/服务费/管理费/运维等全口径）</div>
           </div>
           <div class="brief-item">
             <div class="num">+ ${f2(m.extra)} 万</div>
@@ -237,16 +253,16 @@
 
     let summary;
     if (A) {
-      summary = `在结清高息旧债的同时，额外多融约 <b>${f2(m.extra)} 万元</b>，其中净余约 <b>${f2(m.surplus)} 万元</b>可直接投建新电站；每年可支配现金流增加约 <b>${f2(cfDelta)} 万元</b>（置换后年净现金流 ${f2(m.newYearNetCF)} 万元），综合融资成本由 ${f2(m.oldRate)}% 降至 ${f2(m.newRate)}%（降幅约 ${f2(m.rateDrop * 100)}%）。`;
+      summary = `在结清高息旧债的同时，额外多融约 <b>${f2(m.extra)} 万元</b>，其中净余约 <b>${f2(m.surplus)} 万元</b>可直接投建新电站；每年可支配现金流增加约 <b>${f2(cfDelta)} 万元</b>（置换后年净现金流 ${f2(m.newYearNetCF)} 万元），综合融资成本由 ${f2(m.oldAllInRate)}% 降至约 ${f2(m.newAllInRate)}%（全口径含服务费、管理费、运维费等，降幅约 ${f2(m.allInDrop * 100)}%）。`;
     } else {
-      summary = `在结清高息旧债的同时，额外多融约 <b>${f2(m.extra)} 万元</b>，其中净余约 <b>${f2(m.surplus)} 万元</b>流动资金可直接投建新电站或补充运营；综合融资成本由 ${f2(m.oldRate)}% 降至 ${f2(m.newRate)}%（降幅约 ${f2(m.rateDrop * 100)}%），以可控服务费换取低息与资金放大。`;
+      summary = `在结清高息旧债的同时，额外多融约 <b>${f2(m.extra)} 万元</b>，其中净余约 <b>${f2(m.surplus)} 万元</b>流动资金可直接投建新电站或补充运营；综合融资成本由 ${f2(m.oldAllInRate)}% 降至约 ${f2(m.newAllInRate)}%（全口径含服务费、管理费、运维费等，降幅约 ${f2(m.allInDrop * 100)}%），以可控服务费换取低息与资金放大。`;
     }
 
     const repayLabel = m.newRepay === 'quarter' ? '按季度还款' : '按月还款';
     const careRows = [
       ['可投新电站资金', '0 元', `约 ${f2(m.surplus)} 万`, `多融约 ${f2(m.extra)} 万，净余 ${f2(m.surplus)} 万可建新电站`],
       ['年度富余现金流', `${f2(m.oldYearNetCF)} 万`, `${f2(m.newYearNetCF)} 万`, `每年多出约 ${f2(cfDelta)} 万可支配现金`],
-      ['综合融资成本', `${f2(m.oldRate)}%`, `${f2(m.newRate)}%`, `降幅约 ${f2(m.rateDrop * 100)}%`],
+      ['综合融资成本（全口径）', `${f2(m.oldAllInRate)}%`, `约 ${f2(m.newAllInRate)}%`, `降幅约 ${f2(m.allInDrop * 100)}%（含利息/服务费/管理费/运维等）`],
       ['融资年限', `${m.oldYears} 年`, `${m.newYears} 年`, '期限明确、年还款压力降低'],
       ['还款方式', '原按月', repayLabel, '节奏更稳，与电费收取匹配'],
       ['全周期综合降本', '—', `约 ${f2(m.costSave)} 万`, '全周期累计少支出'],
@@ -295,7 +311,8 @@
 
       <h2>三、综合融资成本降多少</h2>
       <ul>
-        <li>利率直降：融资利率由 ${f2(m.oldRate)}% 降至 ${f2(m.newRate)}%，降幅约 ${f2(m.rateDrop * 100)}%；</li>
+        <li>利率直降：银行利率由 ${f2(m.oldRate)}% 降至 ${f2(m.newRate)}%；</li>
+        <li>全口径成本：综合融资成本（含利息、服务费、评估费、管理费、运维费）由约 ${f2(m.oldAllInRate)}% 降至约 ${f2(m.newAllInRate)}%，实际降幅约 ${f2(m.allInDrop * 100)}%；</li>
         <li>每年更轻：置换后每年本息及综合支出约 ${f2(m.newYearActual)} 万元（含管理、运维全口径）；</li>
         ${A ? `<li>全周期省：全周期（${m.newYears} 年）综合成本支出较原结构累计减少约 ${f2(m.costSave)} 万元（含利息、服务费、管理费、运维费等），是实实在在的长期成本节约。</li>` : `<li>全周期账：以可控服务费换取低息与资金放大，综合融资成本结构更优，现金流更从容。</li>`}
       </ul>
