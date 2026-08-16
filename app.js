@@ -114,12 +114,18 @@
   }
 
   function validate(inp) {
-    const req = [['custName', '客户名称'], ['projName', '项目名称'], ['oldMw', '数量(MW)'],
+    // 文字必填字段（只判空）
+  const textReq = [['custName', '客户名称'], ['projName', '项目名称']];
+  // 数值必填字段（判空 + NaN）
+  const numReq = [['oldMw', '数量(MW)'],
       ['oldAmt', '融资金额'], ['oldBalance', '剩余本金'], ['oldRate', '原融资利率'],
       ['oldYears', '原融资年限'], ['oldAnnual', '年电费收入']];
-    for (const [k, n] of req) {
-      if (inp[k] === '' || isNaN(inp[k])) return '请填写：' + n;
-    }
+  for (const [k, n] of textReq) {
+    if (inp[k] === '') return '请填写：' + n;
+  }
+  for (const [k, n] of numReq) {
+    if (inp[k] === '' || isNaN(inp[k])) return '请填写：' + n;
+  }
     return '';
   }
 
