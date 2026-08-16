@@ -39,6 +39,16 @@
   details.params>summary{font-size:13px;color:var(--brand);cursor:pointer}
   .err{color:var(--warn);font-size:13px;margin-top:8px;min-height:18px}
 
+  /* ===== 简版卡片 ===== */
+  .brief-card{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:6px}
+  .brief-item{background:#fff;border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center}
+  .brief-item .num{font-size:22px;font-weight:700;color:var(--brand)}
+  .brief-item .lbl2{font-size:13px;color:var(--ink);margin:4px 0;font-weight:600}
+  .brief-item .desc{font-size:12px;color:var(--muted);line-height:1.5}
+  .cta-lock{margin-top:22px;background:#f6faf9;border:1px dashed var(--brand);border-radius:12px;padding:20px;text-align:center}
+  .cta-lock h3{margin:0 0 6px;font-size:16px;color:var(--brand)}
+  .cta-lock p{margin:4px 0;font-size:13px;color:var(--muted)}
+
   /* ===== 报告 ===== */
   #report{display:none}
   .doc{background:#fff;border:1px solid var(--line);border-radius:12px;padding:30px 34px;box-shadow:0 2px 12px rgba(0,0,0,.04)}
@@ -64,7 +74,7 @@
   .tag{display:inline-block;font-size:11px;background:#eef4f2;color:var(--brand);border:1px solid var(--line);
     border-radius:20px;padding:2px 10px;margin-left:6px;vertical-align:middle}
   .footer-note{font-size:11px;color:var(--muted);margin-top:18px;text-align:center}
-  @media (max-width:680px){.grid{grid-template-columns:1fr}.doc{padding:20px 16px}}
+  @media (max-width:680px){.grid{grid-template-columns:1fr}.brief-card{grid-template-columns:1fr}.doc{padding:20px 16px}}
   @media print{
     body{background:#fff}.wrap{max-width:none;padding:0}
     header.top,.card.form,.actions,.footer-note,.no-print{display:none!important}
@@ -77,7 +87,7 @@
 <div class="wrap">
   <header class="top no-print">
     <h1>光伏电站存量融资置换 · 智能测算</h1>
-    <p>填入您现有的光伏电站贷款信息，30 秒生成专属「融资置换与资产盘活方案」</p>
+    <p>填入您现有的光伏电站贷款信息，先领简版方案；有兴趣可验证手机获取完整版</p>
   </header>
 
   <!-- ============ 表单 ============ -->
@@ -104,12 +114,20 @@
       <div class="field"><label>提前还款违约金（万元）</label><input id="oldPenalty" type="number" step="0.01" placeholder="如：0"></div>
     </div>
 
+    <h2 style="margin-top:18px">③ 新方案期望（置换后）</h2>
+    <div class="grid">
+      <div class="field"><label>期望融资金额（万元） <b>*</b></label><input id="newAmt" type="number" step="0.01" placeholder="想多融投建新站就改大"></div>
+      <div class="field"><label>期望融资年限（年） <b>*</b></label><input id="newYears" type="number" step="1" placeholder="如：10"></div>
+      <div class="field full"><label>还款方式</label>
+        <select id="newRepay"><option value="month">按月还款</option><option value="quarter">按季度还款</option></select>
+      </div>
+      <p class="hint" style="grid-column:1/-1">提示：期望融资金额填「剩余本金」即纯置换；想放大融资投建新站，把数字改大即可，系统自动算出多融金额与富余资金。</p>
+    </div>
+
     <details class="params no-print">
-      <summary>③ 新方案参数（我司标准，可微调）</summary>
+      <summary>④ 新方案费率参数（我司标准，可微调）</summary>
       <div class="grid" style="margin-top:10px">
         <div class="field"><label>新融资年化利率（%）</label><input id="newRate" type="number" step="0.01" value="4"></div>
-        <div class="field"><label>新融资年限（年）</label><input id="newYears" type="number" step="1" placeholder="默认同原年限"></div>
-        <div class="field"><label>新融资金额（万元）</label><input id="newAmt" type="number" step="0.01" placeholder="默认=剩余本金；想多融改大"></div>
         <div class="field"><label>服务费比例（% of 新融资额）</label><input id="svcRate" type="number" step="0.1" value="5"></div>
         <div class="field"><label>评估费（万元）</label><input id="evalFee" type="number" step="0.01" value="2"></div>
         <div class="field"><label>管理费率（% of 年电费×年限）</label><input id="mgmtRate" type="number" step="0.1" value="2.5"></div>
@@ -117,11 +135,10 @@
         <div class="field"><label>新融资保证金（万元）</label><input id="newDeposit" type="number" step="0.01" placeholder="默认同原保证金"></div>
         <div class="field"><label>新提前还款违约金（万元）</label><input id="newPenalty" type="number" step="0.01" value="0"></div>
       </div>
-      <p class="hint">提示：新融资金额填「剩余本金」即纯置换；想放大融资投建新站，把数字改大即可，系统自动算出多融金额与富余资金。</p>
     </details>
 
     <div class="actions">
-      <button class="btn" id="genBtn">生成我的专属方案</button>
+      <button class="btn" id="genBtn">生成简版方案</button>
       <button class="btn ghost" id="exBtn">填示例数据</button>
       <button class="btn ghost" id="resetBtn">清空</button>
     </div>
@@ -133,7 +150,7 @@
     <div class="doc" id="doc"></div>
   </div>
 
-  <p class="footer-note no-print">本工具为融资置换测算演示，数据仅在本机浏览器计算，不会上传任何服务器。</p>
+  <p class="footer-note no-print">本工具为融资置换测算演示，数据仅在本机浏览器计算，不会上传任何服务器。**验证码为前端演示，实际投放需接入短信接口。**</p>
 </div>
 <script src="app.js"></script>
 </body>

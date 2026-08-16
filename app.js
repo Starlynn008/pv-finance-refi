@@ -2,29 +2,32 @@
   'use strict';
 
   /* ============ 计算模型（纯函数，可 node 测试） ============ */
-  function pmt(annualRate, nperMonths, pv) {
-    const r = annualRate / 100 / 12;
-    if (r === 0) return pv / nperMonths;
-    return pv * r / (1 - Math.pow(1 + r, -nperMonths));
+  // ppy = 每年还款次数（月=12，季=4）
+  function pmt(annualRate, nper, pv, ppy) {
+    const r = annualRate / 100 / (ppy || 12);
+    if (r === 0) return pv / nper;
+    return pv * r / (1 - Math.pow(1 + r, -nper));
   }
-  function schedule(annualRate, nperMonths, pv, mode) {
-    const r = annualRate / 100 / 12;
+  function schedule(annualRate, nper, pv, mode, ppy) {
+    const per = ppy || 12;
+    const r = annualRate / 100 / per;
     const rows = [];
     let bal = pv;
-    const pPer = mode === 'epp' ? pv / nperMonths : 0;
-    for (let i = 1; i <= nperMonths; i++) {
+    const pPer = mode === 'epp' ? pv / nper : 0;
+    for (let i = 1; i <= nper; i++) {
       const interest = bal * r;
       let principal, pay;
       if (mode === 'epp') { principal = pPer; pay = principal + interest; }
-      else { pay = pmt(annualRate, nperMonths, pv); principal = pay - interest; }
+      else { pay = pmt(annualRate, nper, pv, per); principal = pay - interest; }
       bal -= principal;
       if (Math.abs(bal) < 1e-9) bal = 0;
       rows.push({ interest, principal, pay, bal });
     }
     return rows;
   }
-  function yearPI(rows, y) {
-    let s = 0; const a = (y - 1) * 12, b = Math.min(y * 12, rows.length);
+  function yearPI(rows, y, ppy) {
+    const p = ppy || 12;
+    let s = 0; const a = (y - 1) * p, b = Math.min(y * p, rows.length);
     for (let i = a; i < b; i++) s += rows[i].pay;
     return s;
   }
@@ -32,39 +35,48 @@
   function f1(x) { return (Math.round(x * 10) / 10).toFixed(1); }
 
   function computeModel(inp) {
+    // 费率参数带默认值（清空表单后仍可算）
+    const newRate = inp.newRate || 4;
+    const svcRate = inp.svcRate || 5;
+    const evalFee = inp.evalFee || 0;
+    const mgmtRate = inp.mgmtRate || 2.5;
+    const opexRate = inp.opexRate || 1;
+
     const oldYears = inp.oldYears;
     const newYears = inp.newYears || inp.oldYears;
     const newAmt = inp.newAmt || inp.oldBalance;
     const newDeposit = (inp.newDeposit === '' || inp.newDeposit == null) ? inp.oldDeposit : inp.newDeposit;
 
-    const oldRows = schedule(inp.oldRate, oldYears * 12, inp.oldAmt, inp.oldRepay);
-    const newRows = schedule(inp.newRate, newYears * 12, newAmt, 'emi');
+    const oldPpy = 12;                                   // 原方案按月
+    const newPpy = inp.newRepay === 'quarter' ? 4 : 12;  // 新方案按月/按季
 
-    const oldYearPI = yearPI(oldRows, 1);
+    const oldRows = schedule(inp.oldRate, oldYears * 12, inp.oldAmt, inp.oldRepay === 'epp' ? 'epp' : 'emi', oldPpy);
+    const newRows = schedule(newRate, newYears * newPpy, newAmt, 'emi', newPpy);
+
+    const oldYearPI = yearPI(oldRows, 1, oldPpy);
     const oldInterest = oldRows.reduce((a, x) => a + x.interest, 0);
     const oldYearNetCF = inp.oldAnnual - oldYearPI;
 
-    const newYearPI = yearPI(newRows, 1);
+    const newYearPI = yearPI(newRows, 1, newPpy);
     const newInterest = newRows.reduce((a, x) => a + x.interest, 0);
 
-    const svc = newAmt * (inp.svcRate / 100);
-    const evalF = inp.evalFee;
-    const mgmtTotal = inp.oldAnnual * newYears * (inp.mgmtRate / 100);
+    const svc = newAmt * (svcRate / 100);
+    const mgmtTotal = inp.oldAnnual * newYears * (mgmtRate / 100);
     const mgmtYear = mgmtTotal / newYears;
-    const opexTotal = inp.oldMw * inp.opexRate * newYears;
+    const opexTotal = inp.oldMw * opexRate * newYears;
     const opexYear = opexTotal / newYears;
     const newYearActual = newYearPI + mgmtYear + opexYear;
     const newYearNetCF = inp.oldAnnual - newYearActual;
 
     const oldTotalCost = oldInterest + (inp.oldPenalty || 0);
-    const newTotalCost = newInterest + svc + evalF + mgmtTotal + opexTotal + (inp.newPenalty || 0);
+    const newTotalCost = newInterest + svc + evalFee + mgmtTotal + opexTotal + (inp.newPenalty || 0);
     const costSave = oldTotalCost - newTotalCost;
 
     const extra = newAmt - inp.oldBalance;
-    const upfrontNoDeposit = svc + evalF + mgmtYear + opexYear;
+    const upfrontNoDeposit = svc + evalFee + mgmtYear + opexYear;
     const surplus = extra - upfrontNoDeposit;
 
-    const rateDrop = (inp.oldRate - inp.newRate) / inp.oldRate;
+    const rateDrop = (inp.oldRate - newRate) / inp.oldRate;
 
     const oldMonth = oldYearPI / 12, old3m = oldMonth * 3;
     const newQuarter = newYearPI / 4, new3m = newQuarter;
@@ -73,14 +85,14 @@
     const type = (newYearNetCF > oldYearNetCF + 0.01 && costSave > 0) ? 'A' : 'B';
 
     return {
-      oldYears, newYears, newAmt, newDeposit,
+      oldYears, newYears, newAmt, newDeposit, newRepay: inp.newRepay,
       oldYearPI, oldInterest, oldYearNetCF,
-      newYearPI, newInterest, svc, evalF, mgmtTotal, mgmtYear, opexTotal, opexYear,
+      newYearPI, newInterest, svc, evalFee, mgmtTotal, mgmtYear, opexTotal, opexYear,
       newYearActual, newYearNetCF,
       oldTotalCost, newTotalCost, costSave,
       extra, upfrontNoDeposit, surplus, rateDrop,
       oldMonth, old3m, newQuarter, new3m, flowDelta3m, type,
-      newRate: inp.newRate, oldRate: inp.oldRate, oldBalance: inp.oldBalance,
+      newRate, oldRate: inp.oldRate, oldBalance: inp.oldBalance,
       oldMw: inp.oldMw, oldAnnual: inp.oldAnnual, oldDeposit: inp.oldDeposit,
       newPenalty: inp.newPenalty || 0, oldPenalty: inp.oldPenalty || 0
     };
@@ -108,28 +120,117 @@
       oldRate: num('oldRate'), oldRepay: $('oldRepay').value, oldYears: num('oldYears'),
       oldAnnual: num('oldAnnual'), oldDeposit: num('oldDeposit'), oldPenalty: num('oldPenalty'),
       newRate: num('newRate'), newYears: num('newYears'), newAmt: num('newAmt'),
+      newRepay: $('newRepay').value,
       svcRate: num('svcRate'), evalFee: num('evalFee'), mgmtRate: num('mgmtRate'),
       opexRate: num('opexRate'), newDeposit: num('newDeposit'), newPenalty: num('newPenalty')
     };
   }
 
   function validate(inp) {
-    // 文字必填字段（只判空）
-  const textReq = [['custName', '客户名称'], ['projName', '项目名称']];
-  // 数值必填字段（判空 + NaN）
-  const numReq = [['oldMw', '数量(MW)'],
-      ['oldAmt', '融资金额'], ['oldBalance', '剩余本金'], ['oldRate', '原融资利率'],
-      ['oldYears', '原融资年限'], ['oldAnnual', '年电费收入']];
-  for (const [k, n] of textReq) {
-    if (inp[k] === '') return '请填写：' + n;
-  }
-  for (const [k, n] of numReq) {
-    if (inp[k] === '' || isNaN(inp[k])) return '请填写：' + n;
-  }
+    // 文字必填字段：只判空（不能 isNaN，否则中文名误判）
+    const textReq = [['custName', '客户名称'], ['projName', '项目名称']];
+    // 数值必填字段：判空 + NaN
+    const numReq = [['oldMw', '数量(MW)'], ['oldAmt', '融资金额'], ['oldBalance', '剩余本金'],
+      ['oldRate', '原融资利率'], ['oldYears', '原融资年限'], ['oldAnnual', '年电费收入'],
+      ['newAmt', '期望融资金额'], ['newYears', '期望融资年限']];
+    for (const [k, n] of textReq) {
+      if (inp[k] === '') return '请填写：' + n;
+    }
+    for (const [k, n] of numReq) {
+      if (inp[k] === '' || isNaN(inp[k])) return '请填写：' + n;
+    }
     return '';
   }
 
-  function renderReport(m, inp) {
+  let _model = null, _inp = null, _code = '';
+
+  function generate() {
+    const inp = readInput();
+    const err = validate(inp);
+    $('err').textContent = err;
+    if (err) return;
+    _model = computeModel(inp);
+    _inp = inp;
+    renderBrief(_model, _inp);
+  }
+
+  /* ===== 第一步：简版方案 ===== */
+  function renderBrief(m, inp) {
+    const repayDrop = m.oldYearPI - m.newYearPI;
+    const repayDropPct = m.oldYearPI ? (repayDrop / m.oldYearPI * 100) : 0;
+    const costDropPct = m.rateDrop * 100;
+    const A = m.type === 'A';
+    const typeTag = A ? '真实降本型' : '资金放大型';
+
+    const html = `
+      <h1>光伏电站融资置换 · 简版测算</h1>
+      <div class="sub">—— ${inp.projName || '（项目名称）'}</div>
+      <div class="sub">致：${inp.custName || '（客户名称）'}　|　类型：<span class="tag">${typeTag}</span></div>
+
+      <div class="kv">
+        <h2 style="border:none;margin:0 0 12px;padding:0">三项核心收益（一眼看懂）</h2>
+        <div class="brief-card">
+          <div class="brief-item">
+            <div class="num">↓ ${f2(repayDrop)} 万</div>
+            <div class="lbl2">年度还款降幅</div>
+            <div class="desc">原年还款约 ${f2(m.oldYearPI)} 万 → 新约 ${f2(m.newYearPI)} 万（降幅约 ${f2(repayDropPct)}%）</div>
+          </div>
+          <div class="brief-item">
+            <div class="num">↓ ${f2(costDropPct)}%</div>
+            <div class="lbl2">综合融资成本降幅</div>
+            <div class="desc">融资利率由 ${f2(m.oldRate)}% 降至 ${f2(m.newRate)}%</div>
+          </div>
+          <div class="brief-item">
+            <div class="num">+ ${f2(m.extra)} 万</div>
+            <div class="lbl2">整体多融资金额</div>
+            <div class="desc">置换后净余约 ${f2(m.surplus)} 万可投建新电站或补充运营</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="cta-lock no-print">
+        <h3>想看完整方案？含资金用途 / 现金流 / 落地路径 / 费用明细</h3>
+        <p>填写联系方式，验证手机后即可免费获取完整版方案</p>
+        <div class="grid" style="max-width:560px;margin:14px auto">
+          <div class="field"><label>联系人 <b>*</b></label><input id="contactName" placeholder="您的称呼"></div>
+          <div class="field"><label>手机号 <b>*</b></label><input id="contactPhone" type="tel" placeholder="11 位手机号"></div>
+        </div>
+        <div class="actions" style="justify-content:center">
+          <button class="btn ghost" id="codeBtn" type="button">获取验证码</button>
+          <input id="codeInput" placeholder="输入验证码" style="max-width:150px">
+          <button class="btn" id="unlockBtn" type="button">查看完整方案</button>
+        </div>
+        <div class="err" id="gateErr" style="text-align:center"></div>
+        <p class="hint" id="codeHint" style="text-align:center"></p>
+      </div>
+    `;
+    $('doc').innerHTML = html;
+    $('report').style.display = 'block';
+    $('report').scrollIntoView({ behavior: 'smooth' });
+    $('codeBtn').onclick = sendCode;
+    $('unlockBtn').onclick = unlockFull;
+  }
+
+  /* ===== 手机号验证码（纯前端演示） ===== */
+  function sendCode() {
+    const phone = $('contactPhone').value.trim();
+    if (!/^1[3-9]\d{9}$/.test(phone)) { $('gateErr').textContent = '请输入正确的 11 位手机号'; return; }
+    _code = String(Math.floor(100000 + Math.random() * 900000));
+    $('codeHint').textContent = '演示验证码已生成：' + _code + '（纯前端演示，实际投放需接入短信接口）';
+    $('gateErr').textContent = '';
+  }
+  function unlockFull() {
+    const name = $('contactName').value.trim();
+    const phone = $('contactPhone').value.trim();
+    if (!name) { $('gateErr').textContent = '请填写联系人'; return; }
+    if (!/^1[3-9]\d{9}$/.test(phone)) { $('gateErr').textContent = '请输入正确的 11 位手机号'; return; }
+    if (!_code) { $('gateErr').textContent = '请先点击「获取验证码」'; return; }
+    if ($('codeInput').value.trim() !== _code) { $('gateErr').textContent = '验证码错误，请重新获取'; return; }
+    renderFull(_model, _inp, { name, phone });
+  }
+
+  /* ===== 第二步：完整方案 ===== */
+  function renderFull(m, inp, contact) {
     const today = new Date().toLocaleDateString('zh-CN');
     const A = m.type === 'A';
     const cfDelta = m.newYearNetCF - m.oldYearNetCF;
@@ -141,17 +242,19 @@
       summary = `在结清高息旧债的同时，额外多融约 <b>${f2(m.extra)} 万元</b>，其中净余约 <b>${f2(m.surplus)} 万元</b>流动资金可直接投建新电站或补充运营；综合融资成本由 ${f2(m.oldRate)}% 降至 ${f2(m.newRate)}%（降幅约 ${f2(m.rateDrop * 100)}%），以可控服务费换取低息与资金放大。`;
     }
 
+    const repayLabel = m.newRepay === 'quarter' ? '按季度还款' : '按月还款';
     const careRows = [
       ['可投新电站资金', '0 元', `约 ${f2(m.surplus)} 万`, `多融约 ${f2(m.extra)} 万，净余 ${f2(m.surplus)} 万可建新电站`],
       ['年度富余现金流', `${f2(m.oldYearNetCF)} 万`, `${f2(m.newYearNetCF)} 万`, `每年多出约 ${f2(cfDelta)} 万可支配现金`],
       ['综合融资成本', `${f2(m.oldRate)}%`, `${f2(m.newRate)}%`, `降幅约 ${f2(m.rateDrop * 100)}%`],
       ['融资年限', `${m.oldYears} 年`, `${m.newYears} 年`, '期限明确、年还款压力降低'],
+      ['还款方式', '原按月', repayLabel, '节奏更稳，与电费收取匹配'],
       ['全周期综合降本', '—', `约 ${f2(m.costSave)} 万`, '全周期累计少支出'],
       ['现金保证金占用', `${f2(m.oldDeposit)} 万`, `${f2(m.newDeposit)} 万（可用电站质押替代）`, '不占用运营资金']
     ];
     const careHTML = careRows.map(r => `<tr><td class="lbl">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join('');
 
-    const flowHTML = `<tr><td class="lbl">每期还款额</td><td>约 ${f2(m.oldMonth)} 万 / 月</td><td>约 ${f2(m.newQuarter)} 万 / 季</td></tr>
+    const flowHTML = `<tr><td class="lbl">每期还款额</td><td>约 ${f2(m.oldMonth)} 万 / 月</td><td>约 ${f2(m.newQuarter)} 万 / ${m.newRepay === 'quarter' ? '季' : '月'}</td></tr>
       <tr><td class="lbl">每 3 个月累计还款</td><td>约 ${f2(m.old3m)} 万</td><td>约 ${f2(m.new3m)} 万</td></tr>
       <tr><td class="lbl">每 3 个月现金流出</td><td>基准</td><td>减少约 ${f2(m.flowDelta3m)} 万</td></tr>`;
 
@@ -167,7 +270,8 @@
       <h1>光伏电站存量融资置换与并购贷综合服务方案</h1>
       <div class="sub">—— ${inp.projName || '（项目名称）'}</div>
       <div class="sub">致：${inp.custName || '（客户名称）'}　|　编制：光伏资产融资服务团队</div>
-      <div class="sub">日期：${today}　|　方案版本：V1（基于项目融资对比分析）　|　保密 · 仅限双方项目对接使用</div>
+      <div class="sub">日期：${today}　|　方案版本：V1　|　保密 · 仅限双方项目对接使用</div>
+      <div class="sub">对接联系人：${contact.name || '—'}　|　手机：${contact.phone || '—'}</div>
 
       <h2>客户收益速览 <span class="tag">${typeTag}</span></h2>
       <div class="kv">${summary}</div>
@@ -183,11 +287,11 @@
       <ul>
         <li>明显增厚：置换前年净现金流约 ${f2(m.oldYearNetCF)} 万元，置换后约 ${f2(m.newYearNetCF)} 万元；</li>
         <li>抗风险+可扩张：相当于每年多出约 ${f2(cfDelta)} 万元可支配现金，可用于抵充政策风险、应对电费回款不及时或天气波动，也可滚动投资新电站；</li>
-        <li>节奏更稳：还款节奏改为按季度，平滑月度资金压力，与电费收取节奏更匹配。</li>
+        <li>节奏更稳：还款节奏改为${repayLabel}，平滑月度资金压力，与电费收取节奏更匹配。</li>
       </ul>
       <p>还款节奏对比（每 3 个月现金流出）：</p>
-      <table><thead><tr><th>对比维度</th><th>原方案（按月还本付息）</th><th>置换后（按季度还款）</th></tr></thead><tbody>${flowHTML}</tbody></table>
-      <p>即利率下降叠加按季度还款，贵司每 3 个月的现金流出较原结构明显减少，资金调度更从容。</p>
+      <table><thead><tr><th>对比维度</th><th>原方案（按月还本付息）</th><th>置换后（${repayLabel}）</th></tr></thead><tbody>${flowHTML}</tbody></table>
+      <p>即利率下降叠加${repayLabel}，贵司每 3 个月的现金流出较原结构明显减少，资金调度更从容。</p>
 
       <h2>三、综合融资成本降多少</h2>
       <ul>
@@ -210,7 +314,7 @@
       <ul>
         <li>我方融资机构先还清贵司旧债，释放对应电站股权；</li>
         <li>完成股权变更与质押登记，搭建新融资架构（额度高于常规项目贷，更适配存量整合）；</li>
-        <li>按季度还本付息，新放款覆盖旧债并完成多融资金投放。</li>
+        <li>按${repayLabel}还本付息，新放款覆盖旧债并完成多融资金投放。</li>
       </ul>
       <p>实施时间表：</p>
       <table><thead><tr><th>阶段</th><th>工作内容</th><th>周期</th></tr></thead><tbody>
@@ -241,7 +345,6 @@
     $('report').style.display = 'block';
     $('report').scrollIntoView({ behavior: 'smooth' });
     if (window.print) {
-      // 提供打印/保存PDF按钮
       const btn = document.createElement('button');
       btn.className = 'btn no-print';
       btn.textContent = '打印 / 保存为 PDF';
@@ -251,32 +354,34 @@
     }
   }
 
-  function generate() {
-    const inp = readInput();
-    const err = validate(inp);
-    $('err').textContent = err;
-    if (err) return;
-    const m = computeModel(inp);
-    renderReport(m, inp);
-  }
-
   function fillExample() {
     const ex = {
       custName: '智晨', projName: '昂利泰—奥美森 4.416MW', oldOrg: '创佳',
       oldMw: 4.416, oldAmt: 915, oldBalance: 825, oldRate: 8, oldRepay: 'emi',
       oldYears: 10, oldAnnual: 167.808, oldDeposit: 41.25, oldPenalty: 0,
-      newRate: 4, newYears: 10, newAmt: 970, svcRate: 5, evalFee: 2,
-      mgmtRate: 2.5, opexRate: 1, newDeposit: 121.25, newPenalty: 0
+      newAmt: 970, newYears: 10, newRepay: 'month',
+      newRate: 4, svcRate: 5, evalFee: 2, mgmtRate: 2.5, opexRate: 1, newDeposit: 121.25, newPenalty: 0
     };
     for (const k in ex) { const el = $(k); if (el) el.value = ex[k]; }
     generate();
   }
 
   function reset() {
+    // 清空所有输入；select 复位首项
     ['custName', 'projName', 'oldOrg', 'oldMw', 'oldAmt', 'oldBalance', 'oldRate',
-      'oldYears', 'oldAnnual', 'oldDeposit', 'oldPenalty', 'newYears', 'newAmt',
-      'newDeposit', 'newPenalty'].forEach(k => { if ($(k)) $(k).value = ''; });
+      'oldYears', 'oldAnnual', 'oldDeposit', 'oldPenalty', 'newAmt', 'newYears',
+      'newRate', 'svcRate', 'evalFee', 'mgmtRate', 'opexRate', 'newDeposit', 'newPenalty',
+      'contactName', 'contactPhone', 'codeInput'].forEach(k => {
+      const el = $(k); if (!el) return;
+      if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value = '';
+    });
+    // 恢复新方案标准默认值（④ 区块）
+    const def = { newRate: 4, svcRate: 5, evalFee: 2, mgmtRate: 2.5, opexRate: 1, newPenalty: 0 };
+    for (const k in def) { const el = $(k); if (el) el.value = def[k]; }
     $('err').textContent = '';
+    if ($('gateErr')) $('gateErr').textContent = '';
+    if ($('codeHint')) $('codeHint').textContent = '';
+    _code = ''; _model = null; _inp = null;
     $('report').style.display = 'none';
   }
 
