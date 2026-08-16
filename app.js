@@ -135,6 +135,7 @@
       oldMw: num('oldMw'), oldAmt: num('oldAmt'), oldBalance: num('oldBalance'),
       oldRate: num('oldRate'), oldRepay: $('oldRepay').value, oldYears: num('oldYears'),
       oldAnnual: num('oldAnnual'), oldDeposit: num('oldDeposit'), oldPenalty: num('oldPenalty'),
+      oldLoanDate: $('oldLoanDate').value,
       newRate: num('newRate'), newYears: num('newYears'), newAmt: num('newAmt'),
       newRepay: $('newRepay').value,
       svcRate: num('svcRate'), evalFee: num('evalFee'), mgmtRate: num('mgmtRate'),
@@ -145,8 +146,8 @@
   function validate(inp) {
     // 文字必填字段：只判空（不能 isNaN，否则中文名误判）
     const textReq = [['custName', '客户名称'], ['projName', '项目名称']];
-    // 数值必填字段：判空 + NaN
-    const numReq = [['oldMw', '数量(MW)'], ['oldAmt', '融资金额'], ['oldBalance', '剩余本金'],
+    // 数值必填字段：判空 + NaN（oldBalance 由系统自动计算，不要求客户填写）
+    const numReq = [['oldMw', '数量(MW)'], ['oldAmt', '融资金额'],
       ['oldRate', '原融资利率'], ['oldYears', '原融资年限'], ['oldAnnual', '年电费收入'],
       ['newAmt', '期望融资金额'], ['newYears', '期望融资年限']];
     for (const [k, n] of textReq) {
@@ -155,13 +156,48 @@
     for (const [k, n] of numReq) {
       if (inp[k] === '' || isNaN(inp[k])) return '请填写：' + n;
     }
+    // 放款日期必填
+    if (!inp.oldLoanDate) return '请填写：融资放款日期';
     return '';
   }
 
   let _model = null, _inp = null, _code = '';
 
+  /* ===== 自动倒推剩余本金 ===== */
+  // 根据放款日期 + 融资金额 + 利率 + 年限 + 还款方式 → 算到今天还剩多少本金
+  function autoCalcBalance() {
+    const dateStr = $('oldLoanDate').value;
+    const amt = num('oldAmt');
+    const rate = num('oldRate');
+    const yrs = num('oldYears');
+    const mode = $('oldRepay').value;
+    if (!dateStr || isNaN(amt) || isNaN(rate) || isNaN(yrs) || amt <= 0) {
+      $('oldBalance').value = '';
+      return null;
+    }
+    const loanDate = new Date(dateStr);
+    const today = new Date();
+    if (loanDate >= today) { $('oldBalance').value = f2(amt); return amt; }
+    // 已过月数（向上取整，当月算一期）
+    let monthsPassed = (today.getFullYear() - loanDate.getFullYear()) * 12 + (today.getMonth() - loanDate.getMonth());
+    // 如果还没到当月还款日（按每月同日），少算一期
+    const dayInMonth = Math.min(today.getDate(), new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate());
+    const loanDay = loanDate.getDate();
+    if (dayInMonth < loanDay && monthsPassed > 0) monthsPassed--;
+    const totalMonths = Math.round(yrs * 12);
+    if (monthsPassed >= totalMonths) { $('oldBalance').value = '0'; return 0; }
+    // 跑摊销表到当前期
+    const rows = schedule(rate, totalMonths, amt, mode === 'epp' ? 'epp' : 'emi', 12);
+    const bal = monthsPassed > 0 ? Math.max(0, rows[monthsPassed - 1].bal) : amt;
+    $('oldBalance').value = f2(bal);
+    return bal;
+  }
+
   function generate() {
     const inp = readInput();
+    // 自动计算剩余本金
+    const autoBal = autoCalcBalance();
+    if (autoBal !== null && !isNaN(autoBal)) inp.oldBalance = autoBal;
     const err = validate(inp);
     $('err').textContent = err;
     if (err) return;
@@ -373,19 +409,21 @@
   function fillExample() {
     const ex = {
       custName: '智晨', projName: '昂利泰—奥美森 4.416MW', oldOrg: '创佳',
-      oldMw: 4.416, oldAmt: 915, oldBalance: 825, oldRate: 8, oldRepay: 'emi',
+      oldMw: 4.416, oldAmt: 915, oldRate: 8, oldRepay: 'emi',
       oldYears: 10, oldAnnual: 167.808, oldDeposit: 41.25, oldPenalty: 0,
       newAmt: 970, newYears: 10, newRepay: 'month',
-      newRate: 4, svcRate: 5, evalFee: 2, mgmtRate: 2.5, opexRate: 1, newDeposit: 121.25, newPenalty: 0
+      newRate: 4, svcRate: 5, evalFee: 2, mgmtRate: 2.5, opexRate: 1, newDeposit: 121.25, newPenalty: 0,
+      oldLoanDate: '2023-06-15'
     };
     for (const k in ex) { const el = $(k); if (el) el.value = ex[k]; }
+    autoCalcBalance();
     generate();
   }
 
   function reset() {
     // 清空所有输入；select 复位首项
     ['custName', 'projName', 'oldOrg', 'oldMw', 'oldAmt', 'oldBalance', 'oldRate',
-      'oldYears', 'oldAnnual', 'oldDeposit', 'oldPenalty', 'newAmt', 'newYears',
+      'oldYears', 'oldAnnual', 'oldDeposit', 'oldPenalty', 'oldLoanDate', 'newAmt', 'newYears',
       'newRate', 'svcRate', 'evalFee', 'mgmtRate', 'opexRate', 'newDeposit', 'newPenalty',
       'contactName', 'contactPhone', 'codeInput'].forEach(k => {
       const el = $(k); if (!el) return;
@@ -405,5 +443,9 @@
     $('genBtn').onclick = generate;
     $('exBtn').onclick = fillExample;
     $('resetBtn').onclick = reset;
+    // 关键字段变化时自动倒推剩余本金
+    ['oldLoanDate', 'oldAmt', 'oldRate', 'oldYears', 'oldRepay'].forEach(id => {
+      const el = $(id); if (el) el.addEventListener('change', autoCalcBalance);
+    });
   });
 })();
